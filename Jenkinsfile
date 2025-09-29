@@ -58,8 +58,8 @@ pipeline {
           withCredentials([string(credentialsId: "${GITHUB_TOKEN_ID}", variable: 'GH_TOKEN')]) {
             sh '''
               set -eux
-              git config user.email "jenkins@local"
-              git config user.name  "Jenkins"
+              git config user.email "kevin.tom@velocis.co.in"
+              git config user.name  "Kevinjosetom"
               git add "${TARGET_FILE}"
               git commit -m "chore: bump image to docker.io/kevinjosetom/myapp:${DOCKERTAG}" || echo "No changes to commit"
               REMOTE="$(git config --get remote.origin.url | sed -E 's#https?://##')"
