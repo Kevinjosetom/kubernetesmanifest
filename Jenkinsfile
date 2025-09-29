@@ -2,21 +2,22 @@ pipeline {
   agent any
 
   parameters {
-    string(name: 'TAG_NAME', defaultValue: 'latest', description: 'Image tag from Pipeline 1')
+    string(name: 'DOCKERTAG', defaultValue: 'latest', description: 'Tag from Pipeline 1')
   }
 
   environment {
-    GIT_CREDENTIALS = 'github-token-or-userpass'  // Jenkins credential ID
-    GIT_URL         = 'https://github.com/Kevinjosetom/kubernetesmanifest.git'
+    GIT_CREDENTIALS = 'credentials'   // same Jenkins creds ID (GitHub PAT)
+    GIT_URL         = 'https://github.com/Kevinjosetom/kubernetesmanifest.git'  // <-- your repo
     GIT_BRANCH      = 'main'
+
     DEPLOYMENT_NAME = 'flaskdemo'
     CONTAINER_NAME  = 'myapp'
-    IMAGE_REPO      = 'docker.io/kevinjosetom/myapp'
-    TARGET_FILE     = 'deployment.yaml'           // change if your file is elsewhere
+    IMAGE_REPO      = 'docker.io/kevinjosetom/myapp'     // <-- your image repo
+    TARGET_FILE     = 'deployment.yaml'                  // change if path differs
   }
 
   stages {
-    stage('Checkout manifests repo') {
+    stage('Checkout manifests') {
       steps {
         dir('manifests') {
           git branch: "${GIT_BRANCH}", url: "${GIT_URL}", credentialsId: "${GIT_CREDENTIALS}"
@@ -24,13 +25,12 @@ pipeline {
       }
     }
 
-    stage('Get yq (standalone binary)') {
+    stage('Get yq (standalone)') {     // avoids snap issues under /var/lib/jenkins
       steps {
         dir('manifests') {
           sh '''
             set -eux
-            ARCH=$(uname -m)
-            case "$ARCH" in
+            case "$(uname -m)" in
               x86_64|amd64)  FILE=yq_linux_amd64 ;;
               aarch64|arm64) FILE=yq_linux_arm64 ;;
               armv7l)        FILE=yq_linux_arm ;;
@@ -49,12 +49,12 @@ pipeline {
         dir('manifests') {
           sh """
             set -eux
-            echo "Using TAG_NAME=${TAG_NAME}"
+            echo "Using DOCKERTAG=${DOCKERTAG}"
             ./yq -i '
               select(.kind=="Deployment" and .metadata.name=="${DEPLOYMENT_NAME}") |
               .spec.template.spec.containers[] |
               select(.name=="${CONTAINER_NAME}") |
-              .image = "${IMAGE_REPO}:" + (env.TAG_NAME)
+              .image = "${IMAGE_REPO}:" + strenv(DOCKERTAG)
             ' "${TARGET_FILE}"
             git --no-pager diff -- "${TARGET_FILE}" || true
           """
@@ -62,28 +62,20 @@ pipeline {
       }
     }
 
-    stage('Commit & push changes') {
+    stage('Commit & push') {
       steps {
         dir('manifests') {
           withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
-            sh """
+            sh '''
               set -eux
               git config user.email "jenkins@local"
-              git config user.name "Jenkins"
+              git config user.name  "Jenkins"
               git add "${TARGET_FILE}"
-              git commit -m "chore: bump image to ${IMAGE_REPO}:${TAG_NAME}" || echo "No changes to commit"
-              git push https://${GIT_USER}:${GIT_PASS}@${GIT_URL.replace('https://','')} HEAD:${GIT_BRANCH}
-            """
+              git commit -m "chore: bump image to '"${IMAGE_REPO}"':'"${DOCKERTAG}"'" || echo "No changes to commit"
+              REMOTE="$(git config --get remote.origin.url | sed -E 's#https?://##')"
+              git push "https://${GIT_USER}:${GIT_PASS}@${REMOTE}" HEAD:'"${GIT_BRANCH}"'
+            '''
           }
-        }
-      }
-    }
-
-    stage('(Optional) Dry-run diff against cluster') {
-      when { expression { return false } } // set to true if you want this read-only check
-      steps {
-        dir('manifests') {
-          sh 'kubectl diff -f "${TARGET_FILE}" || true'
         }
       }
     }
