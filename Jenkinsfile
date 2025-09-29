@@ -8,21 +8,27 @@ pipeline {
   environment {
     GIT_URL         = 'https://github.com/Kevinjosetom/kubernetesmanifest.git'
     GIT_BRANCH      = 'main'
-    DEPLOYMENT_NAME = 'flaskdemo'
-    CONTAINER_NAME  = 'flaskdemo'      // change if needed
+
+    // Targets from your YAML
+    DEPLOYMENT_NAME = 'flaskdemo'        // metadata.name of the Deployment
+    CONTAINER_NAME  = 'flaskdemo'        // .spec.template.spec.containers[].name
     IMAGE_REPO      = 'docker.io/kevinjosetom/myapp'
     TARGET_FILE     = 'deployment.yaml'
-    GITHUB_TOKEN_ID = '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'
+
+    // Jenkins Credentials (Secret text = GitHub PAT)
+    GITHUB_TOKEN_ID = 'github'
   }
 
   stages {
     stage('Checkout manifests') {
       steps {
-        dir('manifests') { git branch: "${GIT_BRANCH}", url: "${GIT_URL}" }
+        dir('manifests') {
+          git branch: "${GIT_BRANCH}", url: "${GIT_URL}"
+        }
       }
     }
 
-    stage('Get yq & patch') {
+    stage('Get yq (standalone)') {
       steps {
         dir('manifests') {
           sh '''
@@ -37,17 +43,28 @@ pipeline {
             chmod +x yq
             ./yq --version
           '''
-          sh """
+        }
+      }
+    }
+
+    stage('Patch deployment YAML (file only)') {
+      steps {
+        dir('manifests') {
+          // Heredoc to avoid any quoting issues
+          sh '''
             set -eux
-            ./yq -i '
-              if .kind=="Deployment" and .metadata.name=="${DEPLOYMENT_NAME}" then
-                (.spec.template.spec.containers[]
-                  | select(.name=="${CONTAINER_NAME}")
-                  | .image) = "${IMAGE_REPO}:" + strenv(DOCKERTAG)
-              else . end
-            ' "${TARGET_FILE}"
+            cat > prog.yq <<'YQ'
+            if .kind=="Deployment" and .metadata.name==env(DEPLOYMENT_NAME) then
+              (.spec.template.spec.containers[]
+                | select(.name==env(CONTAINER_NAME))
+                | .image) = env(IMAGE_REPO) + ":" + strenv(DOCKERTAG)
+            else . end
+            YQ
+
+            ./yq e -i -f prog.yq "${TARGET_FILE}"
+            ./yq e '.spec.template.spec.containers[] | {name, image}' "${TARGET_FILE}" || true
             git --no-pager diff -- "${TARGET_FILE}" || true
-          """
+          '''
         }
       }
     }
@@ -58,16 +75,22 @@ pipeline {
           withCredentials([string(credentialsId: "${GITHUB_TOKEN_ID}", variable: 'GH_TOKEN')]) {
             sh '''
               set -eux
-              git config user.email "kevin.tom@velocis.co.in"
-              git config user.name  "Kevinjosetom"
+              git config user.email "jenkins@local"
+              git config user.name  "Jenkins"
               git add "${TARGET_FILE}"
-              git commit -m "chore: bump image to docker.io/kevinjosetom/myapp:${DOCKERTAG}" || echo "No changes to commit"
-              REMOTE="$(git config --get remote.origin.url | sed -E 's#https?://##')"
-              git push "https://${GH_TOKEN}@${REMOTE}" HEAD:'"$GIT_BRANCH"'
+              git commit -m "chore: bump image to ${IMAGE_REPO}:${DOCKERTAG}" || echo "No changes to commit"
+              REMOTE="$(git config --get remote.origin.url | sed -E 's#^https?://##')"
+              git push "https://${GH_TOKEN}@${REMOTE}" HEAD:"${GIT_BRANCH}"
             '''
           }
         }
       }
+    }
+  }
+
+  post {
+    success {
+      echo "Updated ${TARGET_FILE} to ${IMAGE_REPO}:${DOCKERTAG} and pushed to ${GIT_BRANCH}."
     }
   }
 }
