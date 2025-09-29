@@ -9,21 +9,18 @@ pipeline {
     GIT_URL         = 'https://github.com/Kevinjosetom/kubernetesmanifest.git'
     GIT_BRANCH      = 'main'
 
-    // Targets from your YAML
     DEPLOYMENT_NAME = 'flaskdemo'       // Deployment metadata.name
     CONTAINER_NAME  = 'flaskdemo'       // containers[].name
     IMAGE_REPO      = 'docker.io/kevinjosetom/myapp'
     TARGET_FILE     = 'deployment.yaml'
 
-    // Jenkins credential (Username + Password/PAT)
-    GITHUB_CREDS_ID = 'github'
+    GITHUB_CREDS_ID = 'github'          // Jenkins credential (Username + Password/PAT)
   }
 
   stages {
     stage('Checkout manifests') {
       steps {
         dir('manifests') {
-          // public clone (no creds needed to read)
           git branch: "${GIT_BRANCH}", url: "${GIT_URL}"
         }
       }
@@ -51,7 +48,6 @@ pipeline {
     stage('Patch deployment YAML (file only)') {
       steps {
         dir('manifests') {
-          // Heredoc avoids all quoting issues and preserves the whole doc
           sh '''
             set -eux
             cat > prog.yq <<'YQ'
@@ -76,7 +72,7 @@ pipeline {
           withCredentials([usernamePassword(
             credentialsId: "${GITHUB_CREDS_ID}",
             usernameVariable: 'GIT_USER',
-            passwordVariable: 'GIT_PASS'   // put your GitHub PAT in the password field
+            passwordVariable: 'GIT_PASS'   // <-- your GitHub PAT here
           )]) {
             sh '''
               set -eux
@@ -85,9 +81,9 @@ pipeline {
               git add "${TARGET_FILE}"
               git commit -m "chore: bump image to ${IMAGE_REPO}:${DOCKERTAG}" || echo "No changes to commit"
 
-              # Build HTTPS remote with credentials and push to the same branch
-              REMOTE="$(git config --get remote.origin.url | sed -E 's#^https?://##')"
-              git push "https://${GIT_USER}:${GIT_PASS}@${REMOTE}" HEAD:"${GIT_BRANCH}"
+              # Use Authorization header (avoids blocked basic-auth in URL and special-char issues)
+              git -c http.extraheader="AUTHORIZATION: Bearer ${GIT_PASS}" \
+                  push https://github.com/Kevinjosetom/kubernetesmanifest.git HEAD:"${GIT_BRANCH}"
             '''
           }
         }
