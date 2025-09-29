@@ -6,7 +6,6 @@ pipeline {
   }
 
   environment {
-    GIT_CREDENTIALS = 'credentials'   // same Jenkins creds ID (GitHub PAT)
     GIT_URL         = 'https://github.com/Kevinjosetom/kubernetesmanifest.git'  // <-- your repo
     GIT_BRANCH      = 'main'
 
@@ -20,7 +19,7 @@ pipeline {
     stage('Checkout manifests') {
       steps {
         dir('manifests') {
-          git branch: "${GIT_BRANCH}", url: "${GIT_URL}", credentialsId: "${GIT_CREDENTIALS}"
+          git branch: "${GIT_BRANCH}", url: "${GIT_URL}"
         }
       }
     }
@@ -65,7 +64,6 @@ pipeline {
     stage('Commit & push') {
       steps {
         dir('manifests') {
-          withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_PASS')]) {
             sh '''
               set -eux
               git config user.email "jenkins@local"
@@ -75,7 +73,6 @@ pipeline {
               REMOTE="$(git config --get remote.origin.url | sed -E 's#https?://##')"
               git push "https://${GIT_USER}:${GIT_PASS}@${REMOTE}" HEAD:'"${GIT_BRANCH}"'
             '''
-          }
         }
       }
     }
